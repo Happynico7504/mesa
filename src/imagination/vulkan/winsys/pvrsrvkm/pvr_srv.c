@@ -691,7 +691,7 @@ static bool pvr_is_driver_compatible(int render_fd)
 
    assert(strcmp(version->name, PVR_SRV_DRIVER_NAME) == 0);
 
-   /* Only the 1.17 driver is supported for now. */
+   /* Only the 1.15 driver is supported for now. */
    if (version->version_major != PVR_SRV_VERSION_MAJ ||
        version->version_minor != PVR_SRV_VERSION_MIN) {
       vk_errorf(NULL,

@@ -76,6 +76,10 @@ VkResult pvr_srv_init_module(int fd, enum pvr_srvkm_module_type module)
 {
    struct drm_srvkm_init_data init_data = { .init_module = module };
 
+   /* The 1.15 driver has no init ioctl, services are ready after open(). */
+   if (PVR_SRV_VERSION_MIN < 17U && module == PVR_SRVKM_MODULE_TYPE_SERVICES)
+      return VK_SUCCESS;
+
    int ret = drmIoctl(fd, DRM_IOCTL_SRVKM_INIT, &init_data);
    if (unlikely(ret)) {
       return vk_errorf(NULL,
