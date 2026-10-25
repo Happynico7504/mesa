@@ -1489,6 +1489,8 @@ struct zink_screen {
    simple_mtx_t dt_lock;
 
    bool device_lost;
+   /* the kernel has no DMA_BUF_IOCTL_EXPORT/IMPORT_SYNC_FILE (before 6.0) */
+   bool no_dmabuf_sync_file;
    int drm_fd;
 #ifdef HAVE_LIBDRM
    struct renderonly *ro;

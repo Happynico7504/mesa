@@ -2572,6 +2572,20 @@ zink_resource_get_dma_buf(struct zink_screen *screen, struct zink_resource *res)
 }
 #endif
 
+#if defined(HAVE_LIBDRM) && (DETECT_OS_LINUX || DETECT_OS_BSD)
+/* Kernels before 6.0 lack the dma-buf sync file ioctls. Without them there
+ * is no implicit sync to take part in, so stop trying.
+ */
+static void
+zink_screen_no_dmabuf_sync_file(struct zink_screen *screen)
+{
+   if (!screen->no_dmabuf_sync_file)
+      mesa_logw("ZINK: the kernel can't export or import dma-buf fences, "
+                "implicit sync is off");
+   screen->no_dmabuf_sync_file = true;
+}
+#endif
+
 /* Returns a semaphore that signals once the dma-buf can be accessed: after
  * its write fences for a read, or after all of its fences for a write.
  */
@@ -2585,6 +2599,9 @@ zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
       .fd = -1,
    };
 
+   if (screen->no_dmabuf_sync_file)
+      return VK_NULL_HANDLE;
+
    int fd = zink_resource_get_dma_buf(screen, res);
    if (unlikely(fd < 0)) {
       mesa_loge("MESA: Unable to get a valid memory fd");
@@ -2594,7 +2611,10 @@ zink_screen_export_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
    int ret = drmIoctl(fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &export);
    close(fd);
    if (ret) {
-      if (errno == ENOTTY || errno == EBADF || errno == ENOSYS) {
+      if (errno == ENOTTY || errno == ENOSYS) {
+         zink_screen_no_dmabuf_sync_file(screen);
+         return VK_NULL_HANDLE;
+      } else if (errno == EBADF) {
          assert(!"how did this fail?");
          return VK_NULL_HANDLE;
       } else {
@@ -2635,8 +2655,16 @@ zink_screen_import_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
       .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
    };
    int sync_file_fd = -1;
+   /* Exporting the sync file also resets the semaphore for its next use, so
+    * do it even when the kernel can't take the fence.
+    */
    VkResult result = VKSCR(GetSemaphoreFdKHR)(screen->dev, &get_fd_info, &sync_file_fd);
    if (result != VK_SUCCESS) {
+      return false;
+   }
+
+   if (screen->no_dmabuf_sync_file) {
+      close(sync_file_fd);
       return false;
    }
 
@@ -2649,7 +2677,9 @@ zink_screen_import_dmabuf_semaphore(struct zink_screen *screen, struct zink_reso
       };
       int ioctl_ret = drmIoctl(fd, DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &import);
       if (ioctl_ret) {
-         if (errno == ENOTTY || errno == EBADF || errno == ENOSYS) {
+         if (errno == ENOTTY || errno == ENOSYS) {
+            zink_screen_no_dmabuf_sync_file(screen);
+         } else if (errno == EBADF) {
             assert(!"how did this fail?");
          } else {
             ret = true;
