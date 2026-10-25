@@ -146,6 +146,23 @@
 
 #define PVR_SRV_VERSION_BUILD 6070602
 
+#if PVR_SRV_VERSION_MIN < 17U
+/* The 1.15 driver has no sync commands on the render node. Timelines are
+ * opened from the pvr_sync misc device and take its ioctls instead
+ * (pvr_fd_sync_kernel.h and linux_sw_sync.h), with the same arguments.
+ */
+#   define PVR_SRV_SYNC_DEVICE "/dev/pvr_sync"
+
+#   undef DRM_IOCTL_SRVKM_SYNC_FORCE_SW_ONLY_CMD
+#   undef DRM_IOCTL_SRVKM_SW_SYNC_CREATE_FENCE_CMD
+#   undef DRM_IOCTL_SRVKM_SW_SYNC_INC_CMD
+#   define DRM_IOCTL_SRVKM_SYNC_FORCE_SW_ONLY_CMD _IO('W', 5)
+#   define DRM_IOCTL_SRVKM_SW_SYNC_CREATE_FENCE_CMD \
+      _IOWR('W', 0, struct drm_srvkm_sw_sync_create_fence_data)
+#   define DRM_IOCTL_SRVKM_SW_SYNC_INC_CMD \
+      _IOR('W', 1, struct drm_srvkm_sw_timeline_advance_data)
+#endif
+
 /*! This flags gets set if the client is 64 Bit compatible. */
 #define PVR_SRV_FLAGS_CLIENT_64BIT_COMPAT BITFIELD_BIT(5U)
 
@@ -509,7 +526,9 @@ struct pvr_srv_phys_mem_export_dmabuf_ret {
  ******************************************************************************/
 
 struct pvr_srv_rgx_create_transfer_context_cmd {
+#if PVR_SRV_VERSION_MIN >= 17U
    uint64_t robustness_address;
+#endif
    void *priv_data;
    uint8_t *reset_framework_cmd;
    uint32_t context_flags;
@@ -556,6 +575,9 @@ struct pvr_srv_rgx_submit_transfer2_cmd {
    int32_t update_timeline_2d;
    int32_t update_timeline_3d;
    int32_t check_fence;
+#if PVR_SRV_VERSION_MIN < 17U
+   uint32_t client_cache_op_seq_num;
+#endif
    uint32_t ext_job_ref;
    uint32_t prepare_count;
    uint32_t sync_pmr_count;
@@ -618,6 +640,9 @@ struct pvr_srv_rgx_kick_cdm2_cmd {
    void **sync_pmrs;
    int32_t check_fence;
    int32_t update_timeline;
+#if PVR_SRV_VERSION_MIN < 17U
+   uint32_t client_cache_op_seq_num;
+#endif
    uint32_t client_update_count;
    uint32_t cmd_size;
    uint32_t ext_job_ref;
@@ -636,6 +661,49 @@ struct pvr_srv_rgx_kick_cdm2_ret {
    PVR_SRV_BRIDGE_RGXTA3D_RGXCREATEHWRTDATASET structs
  ******************************************************************************/
 
+#if PVR_SRV_VERSION_MIN < 17U
+/* 1.15 takes the per RT data addresses as separate fields, the geometry data
+ * addresses once, and returns both HWRT data set handles.
+ */
+struct pvr_srv_rgx_create_hwrt_dataset_cmd {
+   pvr_dev_addr_t pm_mlist_dev_addr0;
+   pvr_dev_addr_t pm_mlist_dev_addr1;
+   pvr_dev_addr_t tail_ptrs_dev_addr;
+   pvr_dev_addr_t macrotile_array_dev_addr0;
+   pvr_dev_addr_t macrotile_array_dev_addr1;
+   pvr_dev_addr_t rtc_dev_addr;
+   pvr_dev_addr_t rgn_header_dev_addr0;
+   pvr_dev_addr_t rgn_header_dev_addr1;
+   pvr_dev_addr_t vheap_table_dev_addr;
+   uint64_t flipped_multi_sample_ctl;
+   uint64_t multi_sample_ctl;
+   uint64_t rgn_header_size;
+   /* ROGUE_FW_MAX_FREELISTS size array of handles. */
+   void **free_lists;
+   uint32_t mtile_stride;
+   uint32_t ppp_screen;
+   uint32_t te_aa;
+   uint32_t te_mtile1;
+   uint32_t te_mtile2;
+   uint32_t te_screen;
+   uint32_t tpc_size;
+   uint32_t tpc_stride;
+   uint32_t isp_merge_lower_x;
+   uint32_t isp_merge_lower_y;
+   uint32_t isp_merge_scale_x;
+   uint32_t isp_merge_scale_y;
+   uint32_t isp_merge_upper_x;
+   uint32_t isp_merge_upper_y;
+   uint32_t isp_mtile_size;
+   uint16_t max_rts;
+} PACKED;
+
+struct pvr_srv_rgx_create_hwrt_dataset_ret {
+   void *hwrt_dataset0;
+   void *hwrt_dataset1;
+   enum pvr_srv_error error;
+} PACKED;
+#else
 struct pvr_srv_rgx_create_hwrt_dataset_cmd {
    uint64_t flipped_multi_sample_ctl;
    uint64_t multi_sample_ctl;
@@ -679,6 +747,7 @@ struct pvr_srv_rgx_create_hwrt_dataset_ret {
    void **hwrt_dataset;
    enum pvr_srv_error error;
 } PACKED;
+#endif
 
 /******************************************************************************
    PVR_SRV_BRIDGE_RGXTA3D_RGXDESTROYHWRTDATASET structs
@@ -748,7 +817,9 @@ struct pvr_srv_rgx_create_render_context_cmd {
 #define RGX_CONTEXT_PRIORITY_LOW 0U
    uint32_t priority;
    uint32_t static_render_context_state_size;
+#if PVR_SRV_VERSION_MIN >= 17U
    uint32_t call_stack_depth;
+#endif
 } PACKED;
 
 struct pvr_srv_rgx_create_render_context_ret {
@@ -806,15 +877,24 @@ struct pvr_srv_rgx_kick_ta3d2_cmd {
    uint32_t cmd_3d_size;
    uint32_t cmd_3d_pr_size;
    uint32_t client_3d_update_count;
+#if PVR_SRV_VERSION_MIN < 17U
+   uint32_t client_cache_op_seq_num;
+#endif
    uint32_t client_ta_fence_count;
    uint32_t client_ta_update_count;
    uint32_t ext_job_ref;
+#if PVR_SRV_VERSION_MIN < 17U
+   uint32_t client_pr_fence_ufo_sync_offset;
+   uint32_t client_pr_fence_value;
+#endif
    uint32_t num_draw_calls;
    uint32_t num_indices;
    uint32_t num_mrts;
    uint32_t pdump_flags;
+#if PVR_SRV_VERSION_MIN >= 17U
    uint32_t client_pr_fence_ufo_sync_offset;
    uint32_t client_pr_fence_value;
+#endif
    uint32_t render_target_size;
    uint32_t sync_pmr_count;
    uint32_t cmd_ta_size;

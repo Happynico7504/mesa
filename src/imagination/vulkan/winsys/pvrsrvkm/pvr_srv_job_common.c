@@ -39,6 +39,20 @@ VkResult pvr_srv_create_timeline(int render_fd, int *const fd_out)
    VkResult result;
    int fd;
 
+#if PVR_SRV_VERSION_MIN < 17U
+   /* Each open of the pvr_sync device is a new timeline. */
+   fd = open(PVR_SRV_SYNC_DEVICE, O_CLOEXEC | O_RDWR);
+   if (fd == -1) {
+      return vk_errorf(NULL,
+                       VK_ERROR_UNKNOWN,
+                       "Could not open " PVR_SRV_SYNC_DEVICE ", errno: %s",
+                       strerror(errno));
+   }
+
+   *fd_out = fd;
+   return VK_SUCCESS;
+#endif
+
    render_path = drmGetRenderDeviceNameFromFd(render_fd);
    if (!render_path) {
       return vk_errorf(NULL,

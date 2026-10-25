@@ -912,7 +912,9 @@ VkResult pvr_srv_rgx_create_transfer_context(int fd,
                                              void **const transfer_context_out)
 {
    struct pvr_srv_rgx_create_transfer_context_cmd cmd = {
+#if PVR_SRV_VERSION_MIN >= 17U
       .robustness_address = robustness_address,
+#endif
       .priority = priority,
       .reset_framework_cmd_size = reset_framework_cmd_size,
       .reset_framework_cmd = reset_framework_cmd,
@@ -1227,6 +1229,41 @@ pvr_srv_rgx_create_hwrt_dataset(int fd,
                                 uint16_t max_rts,
                                 void **hwrt_dataset_out)
 {
+#if PVR_SRV_VERSION_MIN < 17U
+   struct pvr_srv_rgx_create_hwrt_dataset_cmd cmd = {
+      .pm_mlist_dev_addr0 = pm_mlist_dev_addrs[0],
+      .pm_mlist_dev_addr1 = pm_mlist_dev_addrs[1],
+      .tail_ptrs_dev_addr = tail_ptrs_dev_addrs[0],
+      .macrotile_array_dev_addr0 = macrotile_array_dev_addrs[0],
+      .macrotile_array_dev_addr1 = macrotile_array_dev_addrs[1],
+      .rtc_dev_addr = rtc_dev_addrs[0],
+      .rgn_header_dev_addr0 = rgn_header_dev_addrs[0],
+      .rgn_header_dev_addr1 = rgn_header_dev_addrs[1],
+      .vheap_table_dev_addr = vheap_table_dev_adds[0],
+      .flipped_multi_sample_ctl = flipped_multi_sample_ctl,
+      .multi_sample_ctl = multi_sample_ctl,
+      .rgn_header_size = rgn_header_size,
+      .free_lists = free_lists,
+      .mtile_stride = mtile_stride,
+      .ppp_screen = ppp_screen,
+      .te_aa = te_aa,
+      .te_mtile1 = te_mtile1,
+      .te_mtile2 = te_mtile2,
+      .te_screen = te_screen,
+      .tpc_size = tpc_size,
+      .tpc_stride = tpc_stride,
+      .isp_merge_lower_x = isp_merge_lower_x,
+      .isp_merge_lower_y = isp_merge_lower_y,
+      .isp_merge_scale_x = isp_merge_scale_x,
+      .isp_merge_scale_y = isp_merge_scale_y,
+      .isp_merge_upper_x = isp_merge_upper_x,
+      .isp_merge_upper_y = isp_merge_upper_y,
+      .isp_mtile_size = isp_mtile_size,
+      .max_rts = max_rts,
+   };
+
+   STATIC_ASSERT(ROGUE_FWIF_NUM_RTDATAS == 2);
+#else
    /* Note that hwrt_dataset_out is passed in the cmd struct which the kernel
     * writes to. There's also a hwrt_dataset in the ret struct but we're not
     * going to use it since it's the same.
@@ -1260,6 +1297,7 @@ pvr_srv_rgx_create_hwrt_dataset(int fd,
       .tpc_stride = tpc_stride,
       .max_rts = max_rts,
    };
+#endif
 
    struct pvr_srv_rgx_create_hwrt_dataset_ret ret = {
       .error = PVR_SRV_ERROR_BRIDGE_CALL_FAILED,
@@ -1280,9 +1318,14 @@ pvr_srv_rgx_create_hwrt_dataset(int fd,
                            ret);
    }
 
+#if PVR_SRV_VERSION_MIN < 17U
+   hwrt_dataset_out[0] = ret.hwrt_dataset0;
+   hwrt_dataset_out[1] = ret.hwrt_dataset1;
+#else
    VG(VALGRIND_MAKE_MEM_DEFINED(cmd.hwrt_dataset,
                                 sizeof(*cmd.hwrt_dataset) *
                                    ROGUE_FWIF_NUM_RTDATAS));
+#endif
 
    return VK_SUCCESS;
 }
@@ -1417,7 +1460,9 @@ pvr_srv_rgx_create_render_context(int fd,
    struct pvr_srv_rgx_create_render_context_cmd cmd = {
       .priority = priority,
       .vdm_callstack_addr = vdm_callstack_addr,
+#if PVR_SRV_VERSION_MIN >= 17U
       .call_stack_depth = call_stack_depth,
+#endif
       .reset_framework_cmd_size = reset_framework_cmd_size,
       .reset_framework_cmd = reset_framework_cmd,
       .priv_data = priv_data,
