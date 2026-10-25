@@ -1119,23 +1119,33 @@ static void pvr_frag_state_stream_init(struct pvr_render_ctx *ctx,
       /* This is valid even when we don't have a depth attachment because:
        *  - zload_format is set to a sensible default above, and
        *  - job->depth_clear_value is set to a sensible default in that case.
+       *
+       * The GE8300 (simple internal parameter format version 1) takes the
+       * value as a float whatever the ZLS format; the integer encodings
+       * clear the depth to 0 there.
        */
-      switch (zload_format) {
-      case ROGUE_CR_ZLS_FORMAT_TYPE_F32Z:
-      case ROGUE_CR_ZLS_FORMAT_TYPE_F64Z:
+      if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+          PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
+             1) {
          value.value = fui(depth_clear);
-         break;
+      } else {
+         switch (zload_format) {
+         case ROGUE_CR_ZLS_FORMAT_TYPE_F32Z:
+         case ROGUE_CR_ZLS_FORMAT_TYPE_F64Z:
+            value.value = fui(depth_clear);
+            break;
 
-      case ROGUE_CR_ZLS_FORMAT_TYPE_16BITINT:
-         value.value = _mesa_float_to_unorm(depth_clear, 16);
-         break;
+         case ROGUE_CR_ZLS_FORMAT_TYPE_16BITINT:
+            value.value = _mesa_float_to_unorm(depth_clear, 16);
+            break;
 
-      case ROGUE_CR_ZLS_FORMAT_TYPE_24BITINT:
-         value.value = _mesa_float_to_unorm(depth_clear, 24);
-         break;
+         case ROGUE_CR_ZLS_FORMAT_TYPE_24BITINT:
+            value.value = _mesa_float_to_unorm(depth_clear, 24);
+            break;
 
-      default:
-         UNREACHABLE("Unsupported depth format");
+         default:
+            UNREACHABLE("Unsupported depth format");
+         }
       }
    }
    stream_ptr += pvr_cmd_length(CR_ISP_BGOBJDEPTH);
