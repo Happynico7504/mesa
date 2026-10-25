@@ -132,10 +132,10 @@ void pvr_arch_rt_mtile_info_init(const struct pvr_device_info *dev_info,
    if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
        PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
           1) {
-      /* Version 1 has no 2x2 tile groups. With more than one macrotile the
-       * GE8300 only renders the first one, so make the first macrotile
-       * cover the whole render target and put the other boundaries past
-       * it.
+      /* Version 1 has no 2x2 tile groups and a single macrotile (see
+       * rogue_get_num_macrotiles_xy()): it covers the whole render target,
+       * the other boundaries lie past it. With the screen split into more
+       * macrotiles the GE8300 only renders the first one.
        */
       info->mtile_x1 = info->num_tiles_x;
       info->mtile_y1 = info->num_tiles_y;

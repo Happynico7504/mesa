@@ -154,10 +154,10 @@ rogue_get_isp_num_tiles_xy(const struct pvr_device_info *dev_info,
    *x_out = DIV_ROUND_UP(width * scale_x, tile_samples_x);
    *y_out = DIV_ROUND_UP(height * scale_y, tile_samples_y);
 
-   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
-      assert(PVR_GET_FEATURE_VALUE(dev_info,
-                                   simple_parameter_format_version,
-                                   0U) == 2U);
+   /* Version 1 has no 2x2 tile groups. */
+   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+       PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0U) ==
+          2U) {
       /* Align to a 2x2 tile block. */
       *x_out = ALIGN_POT(*x_out, 2);
       *y_out = ALIGN_POT(*y_out, 2);
