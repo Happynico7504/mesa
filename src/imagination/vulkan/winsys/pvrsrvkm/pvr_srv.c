@@ -259,6 +259,60 @@ static void pvr_srv_brn65273_heap_unmap(struct pvr_winsys_vma *vma)
    ws->ops->heap_free(vma);
 }
 
+#if PVR_SRV_VERSION_MIN < 17U
+static VkResult pvr_srv_dummy_rgnhdr_init(struct pvr_srv_winsys *srv_ws)
+{
+   struct pvr_winsys *ws = &srv_ws->base;
+   struct pvr_winsys_bo *bo;
+   VkResult result;
+
+   result = ws->ops->buffer_create(ws,
+                                   ws->page_size,
+                                   ws->page_size,
+                                   PVR_WINSYS_BO_TYPE_GPU,
+                                   PVR_WINSYS_BO_FLAG_GPU_UNCACHED,
+                                   &bo);
+   if (result != VK_SUCCESS)
+      return result;
+
+   result = ws->ops->heap_alloc(&srv_ws->general_heap.base,
+                                ws->page_size,
+                                ws->page_size,
+                                &srv_ws->dummy_rgnhdr_vma);
+   if (result != VK_SUCCESS)
+      goto err_buffer_destroy;
+
+   result = ws->ops->vma_map(srv_ws->dummy_rgnhdr_vma,
+                             bo,
+                             0,
+                             ws->page_size,
+                             NULL);
+   if (result != VK_SUCCESS)
+      goto err_heap_free;
+
+   /* The mapping keeps the bo alive. */
+   ws->ops->buffer_destroy(bo);
+
+   return VK_SUCCESS;
+
+err_heap_free:
+   ws->ops->heap_free(srv_ws->dummy_rgnhdr_vma);
+
+err_buffer_destroy:
+   ws->ops->buffer_destroy(bo);
+
+   return result;
+}
+
+static void pvr_srv_dummy_rgnhdr_finish(struct pvr_srv_winsys *srv_ws)
+{
+   const struct pvr_winsys *const ws = &srv_ws->base;
+
+   ws->ops->vma_unmap(srv_ws->dummy_rgnhdr_vma);
+   ws->ops->heap_free(srv_ws->dummy_rgnhdr_vma);
+}
+#endif
+
 static VkResult pvr_srv_brn65273_heaps_init(struct pvr_srv_winsys *srv_ws,
                                             int inia_heap_idx,
                                             int inib_heap_idx)
@@ -509,6 +563,12 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
    if (result != VK_SUCCESS)
       goto err_pvr_srv_free_static_memory;
 
+#if PVR_SRV_VERSION_MIN < 17U
+   result = pvr_srv_dummy_rgnhdr_init(srv_ws);
+   if (result != VK_SUCCESS)
+      goto err_pvr_srv_free_static_memory;
+#endif
+
    return VK_SUCCESS;
 
 err_pvr_srv_free_static_memory:
@@ -547,6 +607,10 @@ err_pvr_srv_int_ctx_destroy:
 
 static void pvr_srv_memctx_finish(struct pvr_srv_winsys *srv_ws)
 {
+#if PVR_SRV_VERSION_MIN < 17U
+   pvr_srv_dummy_rgnhdr_finish(srv_ws);
+#endif
+
    pvr_winsys_helper_free_static_memory(srv_ws->general_vma,
                                         srv_ws->pds_vma,
                                         srv_ws->usc_vma);

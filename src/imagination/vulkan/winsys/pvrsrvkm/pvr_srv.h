@@ -100,6 +100,15 @@ struct pvr_srv_winsys {
    struct pvr_winsys_vma *mmu_inia_vma;
    struct pvr_winsys_vma *mmu_inib_vma;
 
+#if PVR_SRV_VERSION_MIN < 17U
+   /* On some event the 1.15 firmware first sets up the region headers of a
+    * dummy 4x4 tile render target, at an address it takes from the geometry
+    * command. It did not do this on the first job after boot, but give it
+    * valid memory rather than address 0.
+    */
+   struct pvr_winsys_vma *dummy_rgnhdr_vma;
+#endif
+
    /* vma's for carveout memory regions */
    struct pvr_winsys_vma *pds_vma;
    struct pvr_winsys_vma *usc_vma;

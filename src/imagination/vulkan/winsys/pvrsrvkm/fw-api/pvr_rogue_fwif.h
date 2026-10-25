@@ -151,6 +151,25 @@
  * \brief Configuration registers which need to be loaded by the firmware before
  * a TA job can be started.
  */
+#if PVR_SRV_VERSION_MIN < 17U
+/* The layout the GE8300 1.15 firmware's TA handler reads. */
+struct rogue_fwif_ta_regs {
+   uint64_t vdm_ctrl_stream_base;
+   uint64_t tpu_border_colour_table;
+
+   uint32_t ppp_ctrl;
+   uint32_t te_psg;
+   /* Only used when BRN 49927 present. */
+   uint32_t tpu;
+
+   uint32_t vdm_context_resume_task0_size;
+
+   /* Only used when BRN 67381 present. */
+   uint32_t pds_ctrl;
+
+   uint32_t view_idx;
+};
+#else
 struct rogue_fwif_ta_regs {
    uint64_t vdm_ctrl_stream_base;
    uint64_t tpu_border_colour_table;
@@ -179,6 +198,7 @@ struct rogue_fwif_ta_regs {
 
    uint32_t padding;
 };
+#endif
 
 /**
  * \brief Dummy region header registers.
@@ -235,10 +255,53 @@ static_assert(
    sizeof(struct rogue_fwif_cmd_ta) <= ROGUE_FWIF_DM_INDEPENDENT_KICK_CMD_SIZE,
    "kernel expects command size be increased to match current TA command size");
 
+#if PVR_SRV_VERSION_MIN < 17U
+static_assert(sizeof(struct rogue_fwif_cmd_ta) == 88U &&
+                 offsetof(struct rogue_fwif_cmd_ta, regs) == 16U &&
+                 offsetof(struct rogue_fwif_cmd_ta, flags) == 0x38U &&
+                 offsetof(struct rogue_fwif_cmd_ta,
+                          dummy_rgnhdr_init_geom_regs) == 0x48U,
+              "TA command must match the 1.15 firmware");
+#endif
+
 /**
  * \brief Configuration registers which need to be loaded by the firmware before
  * ISP can be started.
  */
+#if PVR_SRV_VERSION_MIN < 17U
+/* The layout the GE8300 1.15 firmware's 3D handler reads. */
+struct rogue_fwif_3d_regs {
+   uint32_t usc_pixel_output_ctrl;
+
+#   define ROGUE_MAXIMUM_OUTPUT_REGISTERS_PER_PIXEL 4U
+   uint32_t usc_clear_register[ROGUE_MAXIMUM_OUTPUT_REGISTERS_PER_PIXEL];
+
+   uint32_t isp_bgobjdepth;
+   uint32_t isp_bgobjvals;
+   uint32_t isp_aa;
+   uint32_t isp_ctl;
+
+   /* Only used when BRN 49927 present. */
+   uint32_t tpu;
+
+   uint32_t event_pixel_pds_info;
+   uint32_t view_idx;
+   uint32_t event_pixel_pds_data;
+
+   alignas(8) uint64_t isp_scissor_base;
+   uint64_t isp_dbias_base;
+   uint64_t isp_oclqry_base;
+   uint64_t isp_zlsctl;
+   uint64_t isp_zload_store_base;
+   uint64_t isp_stencil_load_store_base;
+
+#   define ROGUE_PBE_WORDS_REQUIRED_FOR_RENDERS 2U
+   uint64_t pbe_word[8U][ROGUE_PBE_WORDS_REQUIRED_FOR_RENDERS];
+   uint64_t tpu_border_colour_table;
+   uint64_t pds_bgnd[3U];
+   uint64_t pds_pr_bgnd[3U];
+};
+#else
 struct rogue_fwif_3d_regs {
    /**
     * All 32 bit values should be added in the top section. This then requires
@@ -317,6 +380,7 @@ struct rogue_fwif_3d_regs {
    /* Only used when BRN 67182 present. */
    uint32_t rgnhdr_scratch_offset;
 };
+#endif
 
 /**
  * \brief DM command for fragment processing phase of a render/3D operation.
@@ -341,11 +405,23 @@ struct rogue_fwif_cmd_3d {
    /** Stride IN BYTES for S-Buffer in case of RTAs. */
    uint32_t sls_stride;
 
+#if PVR_SRV_VERSION_MIN >= 17U
    /* Number of tiles to submit to GPU<N> before moving to GPU<N+1>. */
    uint32_t execute_count;
+#endif
 
    uint32_t padding;
 };
+
+#if PVR_SRV_VERSION_MIN < 17U
+static_assert(sizeof(struct rogue_fwif_cmd_3d) == 320U &&
+                 offsetof(struct rogue_fwif_cmd_3d, regs) == 16U &&
+                 offsetof(struct rogue_fwif_cmd_3d, regs.event_pixel_pds_data) ==
+                    0x40U &&
+                 offsetof(struct rogue_fwif_cmd_3d, regs.pbe_word) == 0x78U &&
+                 offsetof(struct rogue_fwif_cmd_3d, flags) == 0x130U,
+              "3D command must match the 1.15 firmware");
+#endif
 
 static_assert(
    offsetof(struct rogue_fwif_cmd_3d, cmd_shared) == 0U,

@@ -249,6 +249,12 @@ static void pvr_rogue_ct_te_init(const struct pvr_device_info *dev_info,
 {
    uint32_t samples_per_pixel =
       PVR_GET_FEATURE_VALUE(dev_info, isp_samples_per_pixel, 0);
+   /* Only version 2 of the simple parameter format splits the screen with
+    * the first boundary alone.
+    */
+   const bool all_mtile_boundaries =
+      !PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) ||
+      PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) == 1;
 
    pvr_csb_pack (&te_regs->aa, CR_TE_AA, value) {
       if (samples_per_pixel == 1) {
@@ -277,7 +283,7 @@ static void pvr_rogue_ct_te_init(const struct pvr_device_info *dev_info,
 
    pvr_csb_pack (&te_regs->mtile1, CR_TE_MTILE1, value) {
       value.x1 = mtile_info->mtile_x1;
-      if (!PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
+      if (all_mtile_boundaries) {
          value.x2 = mtile_info->mtile_x2;
          value.x3 = mtile_info->mtile_x3;
       }
@@ -285,7 +291,7 @@ static void pvr_rogue_ct_te_init(const struct pvr_device_info *dev_info,
 
    pvr_csb_pack (&te_regs->mtile2, CR_TE_MTILE2, value) {
       value.y1 = mtile_info->mtile_y1;
-      if (!PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
+      if (all_mtile_boundaries) {
          value.y2 = mtile_info->mtile_y2;
          value.y3 = mtile_info->mtile_y3;
       }
@@ -599,6 +605,22 @@ pvr_srv_fragment_cmd_stream_load(struct rogue_fwif_cmd_3d *const cmd,
    regs->isp_stencil_load_store_base = *(const uint64_t *)stream_ptr;
    stream_ptr += pvr_cmd_length(CR_ISP_STENCIL_LOAD_BASE);
 
+#if PVR_SRV_VERSION_MIN < 17U
+   assert(!PVR_HAS_FEATURE(dev_info, requires_fb_cdc_zls_setup));
+
+   /* The stream carries 3 PBE words per render target, the 1.15 firmware
+    * takes the first 2. The third is only set with ERN 42064.
+    */
+   assert(!PVR_HAS_ENHANCEMENT(dev_info, 42064));
+   STATIC_ASSERT(ARRAY_SIZE(regs->pbe_word) == 8U);
+   STATIC_ASSERT(ARRAY_SIZE(regs->pbe_word[0]) == 2U);
+   STATIC_ASSERT(sizeof(regs->pbe_word[0][0]) == sizeof(uint64_t));
+   for (uint32_t i = 0U; i < ARRAY_SIZE(regs->pbe_word); i++) {
+      memcpy(regs->pbe_word[i],
+             (const uint64_t *)stream_ptr + i * 3U,
+             sizeof(regs->pbe_word[i]));
+   }
+#else
    if (PVR_HAS_FEATURE(dev_info, requires_fb_cdc_zls_setup)) {
       regs->fb_cdc_zls = *(const uint64_t *)stream_ptr;
       stream_ptr += 2U;
@@ -608,6 +630,7 @@ pvr_srv_fragment_cmd_stream_load(struct rogue_fwif_cmd_3d *const cmd,
    STATIC_ASSERT(ARRAY_SIZE(regs->pbe_word[0]) == 3U);
    STATIC_ASSERT(sizeof(regs->pbe_word[0][0]) == sizeof(uint64_t));
    memcpy(regs->pbe_word, stream_ptr, sizeof(regs->pbe_word));
+#endif
    stream_ptr += 8U * 3U * 2U;
 
    regs->tpu_border_colour_table = *(const uint64_t *)stream_ptr;
@@ -623,7 +646,8 @@ pvr_srv_fragment_cmd_stream_load(struct rogue_fwif_cmd_3d *const cmd,
    memcpy(regs->pds_pr_bgnd, stream_ptr, sizeof(regs->pds_pr_bgnd));
    stream_ptr += 3U * 2U;
 
-   STATIC_ASSERT(ARRAY_SIZE(regs->usc_clear_register) == 8U);
+   /* The stream carries 8 clear registers, the 1.15 firmware takes 4. */
+   STATIC_ASSERT(ARRAY_SIZE(regs->usc_clear_register) <= 8U);
    STATIC_ASSERT(sizeof(regs->usc_clear_register[0]) == sizeof(uint32_t));
    memcpy(regs->usc_clear_register,
           stream_ptr,
@@ -648,6 +672,24 @@ pvr_srv_fragment_cmd_stream_load(struct rogue_fwif_cmd_3d *const cmd,
    regs->event_pixel_pds_info = *stream_ptr;
    stream_ptr += pvr_cmd_length(CR_EVENT_PIXEL_PDS_INFO);
 
+#if PVR_SRV_VERSION_MIN < 17U
+   /* The 1.15 3D command has no room for these. */
+   assert(!PVR_HAS_FEATURE(dev_info, cluster_grouping));
+   assert(!PVR_HAS_FEATURE(dev_info, gpu_multicore_support));
+   assert(!PVR_HAS_FEATURE(dev_info, zls_subtile));
+
+   regs->view_idx = *stream_ptr;
+   stream_ptr++;
+
+   regs->event_pixel_pds_data = *stream_ptr;
+   stream_ptr += pvr_cmd_length(CR_EVENT_PIXEL_PDS_DATA);
+
+   cmd->zls_stride = *stream_ptr;
+   stream_ptr++;
+
+   cmd->sls_stride = *stream_ptr;
+   stream_ptr++;
+#else
    if (PVR_HAS_FEATURE(dev_info, cluster_grouping)) {
       regs->pixel_phantom = *stream_ptr;
       stream_ptr++;
@@ -679,6 +721,7 @@ pvr_srv_fragment_cmd_stream_load(struct rogue_fwif_cmd_3d *const cmd,
       cmd->execute_count = *stream_ptr;
       stream_ptr++;
    }
+#endif
 
    assert((const uint8_t *)stream_ptr - stream <= stream_len);
    assert((const uint8_t *)stream_ptr - stream == main_stream_len);
@@ -798,6 +841,17 @@ VkResult PVR_PER_ARCH(srv_winsys_render_submit)(
 
    VkResult result;
    srv_geometry_cmd_init(submit_info, sync_prim, &geom_cmd, dev_info);
+#if PVR_SRV_VERSION_MIN < 17U
+   geom_cmd.dummy_rgnhdr_init_geom_regs.te_psgregion_addr =
+      srv_ws->dummy_rgnhdr_vma->dev_addr.addr;
+
+   /* The 1.15 firmware always replaces the vertex task limit in CR_PDS_CTRL
+    * with the one in the command, so 0 would allow no vertex tasks and the
+    * geometry phase would never start. Use the limit the firmware programs
+    * at boot.
+    */
+   geom_cmd.regs.pds_ctrl = 0x5f00U;
+#endif
 
    srv_fragment_cmd_init(&pr_cmd,
                          &submit_info->fragment_pr,
