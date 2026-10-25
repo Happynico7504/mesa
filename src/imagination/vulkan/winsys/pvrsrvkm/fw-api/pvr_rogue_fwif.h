@@ -373,8 +373,10 @@ struct rogue_fwif_transfer_regs {
    uint32_t isp_render_origin;
    uint32_t isp_ctl;
 
+#if PVR_SRV_VERSION_MIN >= 17U
    /* Only used when feature S7_TOP_INFRASTRUCTURE present. */
    uint32_t isp_xtp_pipe_enable;
+#endif
    uint32_t isp_aa;
 
    uint32_t event_pixel_pds_info;
@@ -395,7 +397,15 @@ struct rogue_fwif_transfer_regs {
 
    uint64_t isp_mtile_base;
    /* TQ_MAX_RENDER_TARGETS * PBE_STATE_SIZE */
-#define ROGUE_PBE_WORDS_REQUIRED_FOR_TQS 3
+#if PVR_SRV_VERSION_MIN < 17U
+/* The 1.15 GE8300 firmware is built without S7_TOP_INFRASTRUCTURE and
+ * ERN 42064, so it takes two PBE words per render target (layout read from
+ * its TQ 3D kick, 160 bytes per command as in its alignment checks).
+ */
+#   define ROGUE_PBE_WORDS_REQUIRED_FOR_TQS 2
+#else
+#   define ROGUE_PBE_WORDS_REQUIRED_FOR_TQS 3
+#endif
    uint64_t pbe_wordx_mrty[PVR_TRANSFER_MAX_RENDER_TARGETS *
                            ROGUE_PBE_WORDS_REQUIRED_FOR_TQS];
 };
@@ -552,5 +562,12 @@ static_assert(
 #define ROGUE_FWIF_HEAP_FIXED_OFFSET_GENERAL_HEAP_YUV_CSC_MAX_SIZE_BYTES 1024U
 
 #define ROGUE_FWIF_HEAP_FIXED_OFFSET_GENERAL_HEAP_TOTAL_BYTES 4096U
+
+#if PVR_SRV_VERSION_MIN < 17U
+/* Sizes from the alignment checks in the 1.15@6070602 GE8300 firmware. */
+static_assert(sizeof(struct rogue_fwif_cmd_transfer) == 160U &&
+                 offsetof(struct rogue_fwif_cmd_transfer, regs) == 8U,
+              "rogue_fwif_cmd_transfer does not match the 1.15 firmware");
+#endif
 
 #endif /* PVR_ROGUE_FWIF_H */

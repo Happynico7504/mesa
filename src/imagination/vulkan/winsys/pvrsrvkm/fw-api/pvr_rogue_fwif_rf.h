@@ -40,6 +40,13 @@ struct rogue_fwif_rf_regs {
 };
 
 struct rogue_fwif_rf_cmd {
+#if PVR_SRV_VERSION_MIN < 17U
+   /* Before 1.17 the firmware reads this unconditionally, so even an empty
+    * reset framework command has to carry it.
+    */
+   uint32_t flags;
+#endif
+
    /* THIS MUST BE THE LAST MEMBER OF THE CONTAINING STRUCTURE */
    alignas(8) struct rogue_fwif_rf_regs regs;
 };
