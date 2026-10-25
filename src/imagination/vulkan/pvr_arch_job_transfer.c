@@ -4059,6 +4059,26 @@ static VkResult pvr_isp_ctrl_stream(const struct pvr_device_info *dev_info,
    uint32_t num_prim_blks = 0U;
    uint32_t prim_blk_size = 0U;
    uint32_t region_arrays_size;
+
+   /* The IPF control stream below follows version 2 of the simple internal
+    * parameter format. Version 1 cores read it wrong and reset the GPU.
+    */
+   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+       PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
+          1) {
+      static bool warned[2];
+      const bool fill = (transfer_cmd->flags & PVR_TRANSFER_CMD_FLAGS_FILL) != 0U;
+
+      if (!warned[fill]) {
+         warned[fill] = true;
+         mesa_logw("Transfer: Fast2D %s%s is not supported on this core and "
+                   "will reset the GPU.",
+                   fill ? "clear" : "copy",
+                   (transfer_cmd->flags & PVR_TRANSFER_CMD_FLAGS_DSMERGE)
+                      ? " merging depth/stencil"
+                      : "");
+      }
+   }
    uint32_t num_region_arrays;
    uint32_t total_stream_size;
    bool was_linked = false;

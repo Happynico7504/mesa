@@ -18,6 +18,7 @@
 
 #include "vk_device.h"
 #include "vk_device_memory.h"
+#include "vk_meta.h"
 #include "vk_physical_device.h"
 
 #include "wsi_common.h"
@@ -57,6 +58,9 @@ struct pvr_device {
    struct vk_device vk;
    struct pvr_instance *instance;
    struct pvr_physical_device *pdevice;
+
+   /* Common Vulkan helpers for operations done by rendering */
+   struct vk_meta_device meta;
 
    struct pvr_winsys *ws;
    struct pvr_winsys_heaps heaps;

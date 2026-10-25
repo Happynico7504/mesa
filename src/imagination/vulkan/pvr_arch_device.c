@@ -936,6 +936,10 @@ VkResult PVR_PER_ARCH(create_device)(struct pvr_physical_device *pdevice,
    if (result != VK_SUCCESS)
       goto err_pvr_border_color_table_finish;
 
+   result = vk_meta_device_init(&device->vk, &device->meta);
+   if (result != VK_SUCCESS)
+      goto err_pvr_device_dummy_rt_finish;
+
    /* Initialize GPU tracing infrastructure */
    pvr_device_utrace_init(device);
 
@@ -956,6 +960,9 @@ VkResult PVR_PER_ARCH(create_device)(struct pvr_physical_device *pdevice,
    *pDevice = pvr_device_to_handle(device);
 
    return VK_SUCCESS;
+
+err_pvr_device_dummy_rt_finish:
+   pvr_device_dummy_rt_finish(device);
 
 err_pvr_border_color_table_finish:
    pvr_arch_border_color_table_finish(device);
@@ -1047,6 +1054,7 @@ void PVR_PER_ARCH(destroy_device)(struct pvr_device *device,
    simple_mtx_unlock(&device->rs_mtx);
    simple_mtx_destroy(&device->rs_mtx);
 
+   vk_meta_device_finish(&device->vk, &device->meta);
    pvr_device_dummy_rt_finish(device);
    pvr_arch_border_color_table_finish(device);
    pvr_robustness_buffer_finish(device);

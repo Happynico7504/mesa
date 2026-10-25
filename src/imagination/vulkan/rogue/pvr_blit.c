@@ -53,6 +53,7 @@
 #include "vk_command_pool.h"
 #include "vk_format.h"
 #include "vk_log.h"
+#include "vk_meta.h"
 
 /* TODO: Investigate where this limit comes from. */
 #define PVR_MAX_TRANSFER_SIZE_IN_TEXELS 2048U
@@ -1410,6 +1411,108 @@ void pvr_clear_depth_stencil_image(struct pvr_cmd_buffer *cmd_buffer,
    }
 }
 
+/* Clearing only the depth or only the stencil of a packed depth/stencil image
+ * takes a merge, which the transfer code does as a Fast2D blit. That doesn't
+ * work with version 1 of the simple internal parameter format, so render the
+ * clear there instead, loading the aspect that is kept.
+ */
+static bool pvr_clear_ds_by_rendering(const struct pvr_device_info *dev_info,
+                                      const struct pvr_image *image,
+                                      VkImageAspectFlags aspects)
+{
+   const VkImageAspectFlags ds_aspect = VK_IMAGE_ASPECT_DEPTH_BIT |
+                                        VK_IMAGE_ASPECT_STENCIL_BIT;
+
+   return PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+          PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
+             1 &&
+          vk_format_aspects(image->vk.format) == ds_aspect &&
+          aspects != ds_aspect &&
+          (image->vk.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+}
+
+static void
+pvr_render_clear_depth_stencil_range(struct pvr_cmd_buffer *cmd_buffer,
+                                     struct pvr_image *image,
+                                     VkImageLayout image_layout,
+                                     const VkClearDepthStencilValue *value,
+                                     const VkImageSubresourceRange *range)
+{
+   struct pvr_device *device = cmd_buffer->device;
+   const struct vk_device_dispatch_table *disp = &device->vk.dispatch_table;
+   VkCommandBuffer _cmd = pvr_cmd_buffer_to_handle(cmd_buffer);
+   const uint32_t level_count =
+      vk_image_subresource_level_count(&image->vk, range);
+   const uint32_t layer_count =
+      vk_image_subresource_layer_count(&image->vk, range);
+   const VkImageViewUsageCreateInfo view_usage = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+   };
+
+   for (uint32_t l = 0; l < level_count; l++) {
+      const uint32_t level = range->baseMipLevel + l;
+      const VkExtent3D extent = vk_image_mip_level_extent(&image->vk, level);
+      const VkImageViewCreateInfo view_info = {
+         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+         .pNext = &view_usage,
+         .flags = VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA,
+         .image = pvr_image_to_handle(image),
+         .viewType = image->vk.image_type == VK_IMAGE_TYPE_1D
+                        ? (layer_count == 1 ? VK_IMAGE_VIEW_TYPE_1D
+                                            : VK_IMAGE_VIEW_TYPE_1D_ARRAY)
+                        : (layer_count == 1 ? VK_IMAGE_VIEW_TYPE_2D
+                                            : VK_IMAGE_VIEW_TYPE_2D_ARRAY),
+         .format = image->vk.format,
+         .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
+                          VK_IMAGE_ASPECT_STENCIL_BIT,
+            .baseMipLevel = level,
+            .levelCount = 1,
+            .baseArrayLayer = range->baseArrayLayer,
+            .layerCount = layer_count,
+         },
+      };
+      VkImageView view;
+      VkResult result;
+
+      result = vk_meta_create_image_view(&cmd_buffer->vk,
+                                         &device->meta,
+                                         &view_info,
+                                         &view);
+      if (result != VK_SUCCESS) {
+         vk_command_buffer_set_error(&cmd_buffer->vk, result);
+         return;
+      }
+
+      const VkRenderingAttachmentInfo depth = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+         .imageView = view,
+         .imageLayout = image_layout,
+         .loadOp = (range->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT)
+                      ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                      : VK_ATTACHMENT_LOAD_OP_LOAD,
+         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+         .clearValue.depthStencil = *value,
+      };
+      VkRenderingAttachmentInfo stencil = depth;
+      stencil.loadOp = (range->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT)
+                          ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                          : VK_ATTACHMENT_LOAD_OP_LOAD;
+
+      const VkRenderingInfo rendering = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+         .renderArea = { .extent = { extent.width, extent.height } },
+         .layerCount = layer_count,
+         .pDepthAttachment = &depth,
+         .pStencilAttachment = &stencil,
+      };
+
+      disp->CmdBeginRendering(_cmd, &rendering);
+      disp->CmdEndRendering(_cmd);
+   }
+}
+
 void pvr_rogue_CmdClearDepthStencilImage(
    VkCommandBuffer commandBuffer,
    VkImage _image,
@@ -1420,12 +1523,24 @@ void pvr_rogue_CmdClearDepthStencilImage(
 {
    VK_FROM_HANDLE(pvr_cmd_buffer, cmd_buffer, commandBuffer);
    VK_FROM_HANDLE(pvr_image, image, _image);
+   const struct pvr_device_info *dev_info =
+      &cmd_buffer->device->pdevice->dev_info;
 
-   pvr_clear_depth_stencil_image(cmd_buffer,
-                                 image,
-                                 pDepthStencil,
-                                 rangeCount,
-                                 pRanges);
+   for (uint32_t i = 0; i < rangeCount; i++) {
+      if (pvr_clear_ds_by_rendering(dev_info, image, pRanges[i].aspectMask)) {
+         pvr_render_clear_depth_stencil_range(cmd_buffer,
+                                              image,
+                                              imageLayout,
+                                              pDepthStencil,
+                                              &pRanges[i]);
+      } else {
+         pvr_clear_depth_stencil_image(cmd_buffer,
+                                       image,
+                                       pDepthStencil,
+                                       1,
+                                       &pRanges[i]);
+      }
+   }
 }
 
 static VkResult pvr_cmd_copy_buffer_region(struct pvr_cmd_buffer *cmd_buffer,
