@@ -1558,11 +1558,12 @@ static VkResult pvr_cmd_copy_buffer_region(struct pvr_cmd_buffer *cmd_buffer,
       const VkDeviceSize remaining_size = size - offset;
       struct pvr_transfer_cmd *transfer_cmd;
       uint32_t src_align = (src_addr.addr + offset + src_offset) & 0xF;
-      uint32_t dst_align = (dst_addr.addr + offset + src_offset) & 0xF;
+      uint32_t dst_align = (dst_addr.addr + offset + dst_offset) & 0xF;
       uint32_t texel_width;
       VkDeviceSize texels;
       VkFormat vk_format;
       VkResult result;
+      uint32_t dst_stride;
       uint32_t height;
       uint32_t width;
 
@@ -1596,6 +1597,15 @@ static VkResult pvr_cmd_copy_buffer_region(struct pvr_cmd_buffer *cmd_buffer,
          height = 1;
       }
 
+      /* A single row has no next row for the stride to place, so give the
+       * PBE one it can take. An odd width would otherwise send the copy
+       * through the double stride workaround, which needs a Fast2D blit.
+       */
+      dst_stride = height == 1
+                      ? ALIGN_POT(width,
+                                  ROGUE_PBESTATE_REG_WORD0_LINESTRIDE_UNIT_SIZE)
+                      : width;
+
       transfer_cmd = pvr_transfer_cmd_alloc(cmd_buffer);
       if (!transfer_cmd)
          return VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -1627,7 +1637,7 @@ static VkResult pvr_cmd_copy_buffer_region(struct pvr_cmd_buffer *cmd_buffer,
                                vk_format,
                                width,
                                height,
-                               width);
+                               dst_stride);
 
       if (transfer_cmd->source_count > 0) {
          transfer_cmd->sources[0].mappings[0].dst_rect = transfer_cmd->scissor;
