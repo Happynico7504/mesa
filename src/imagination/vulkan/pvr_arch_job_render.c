@@ -107,6 +107,9 @@ static inline void pvr_get_samples_in_xy(uint32_t samples,
    }
 }
 
+/* The CR_TE_MTILE1/2 boundary fields are 9 bits wide. */
+#define PVR_V1_MTILE_BOUNDARY_MAX 511U
+
 void pvr_arch_rt_mtile_info_init(const struct pvr_device_info *dev_info,
                                  struct pvr_rt_mtile_info *info,
                                  uint32_t width,
@@ -129,15 +132,17 @@ void pvr_arch_rt_mtile_info_init(const struct pvr_device_info *dev_info,
    if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
        PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
           1) {
-      /* Version 1 has no 2x2 tile groups. Set up 16 macrotiles as below,
-       * without aligning them to a tile group.
+      /* Version 1 has no 2x2 tile groups. With more than one macrotile the
+       * GE8300 only renders the first one, so make the first macrotile
+       * cover the whole render target and put the other boundaries past
+       * it.
        */
-      info->mtile_x1 = DIV_ROUND_UP(info->num_tiles_x, 4);
-      info->mtile_y1 = DIV_ROUND_UP(info->num_tiles_y, 4);
-      info->mtile_x2 = 0;
-      info->mtile_y2 = 0;
-      info->mtile_x3 = 0;
-      info->mtile_y3 = 0;
+      info->mtile_x1 = info->num_tiles_x;
+      info->mtile_y1 = info->num_tiles_y;
+      info->mtile_x2 = MIN2(info->mtile_x1 * 2, PVR_V1_MTILE_BOUNDARY_MAX);
+      info->mtile_y2 = MIN2(info->mtile_y1 * 2, PVR_V1_MTILE_BOUNDARY_MAX);
+      info->mtile_x3 = MIN2(info->mtile_x1 * 3, PVR_V1_MTILE_BOUNDARY_MAX);
+      info->mtile_y3 = MIN2(info->mtile_y1 * 3, PVR_V1_MTILE_BOUNDARY_MAX);
       info->x_tile_max = info->num_tiles_x - 1;
       info->y_tile_max = info->num_tiles_y - 1;
    } else if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {

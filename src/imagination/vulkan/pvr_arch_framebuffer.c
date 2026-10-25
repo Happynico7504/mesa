@@ -33,26 +33,28 @@ VkResult PVR_PER_ARCH(ppp_state_create)(struct pvr_device *device,
                                         struct pvr_suballoc_bo **const bo_out,
                                         size_t *const size_out)
 {
-   const uint32_t cache_line_size =
-      pvr_get_slc_cache_line_size(&device->pdevice->dev_info);
+   const struct pvr_device_info *dev_info = &device->pdevice->dev_info;
+   const uint32_t cache_line_size = pvr_get_slc_cache_line_size(dev_info);
+   /* Like the region clip, the clip is in 16 pixel units on cores with
+    * 16x16 tiles.
+    */
+   const uint32_t clip_block_size =
+      PVR_HAS_FEATURE(dev_info, tile_size_16x16)
+         ? 16U
+         : ROGUE_TA_STATE_TERMINATE0_CLIP_RIGHT_BLOCK_SIZE_IN_PIXELS;
    uint32_t ppp_state[3];
    VkResult result;
+
+   STATIC_ASSERT(ROGUE_TA_STATE_TERMINATE0_CLIP_RIGHT_BLOCK_SIZE_IN_PIXELS ==
+                 ROGUE_TA_STATE_TERMINATE0_CLIP_BOTTOM_BLOCK_SIZE_IN_PIXELS);
 
    pvr_csb_pack (&ppp_state[0], TA_STATE_HEADER, header) {
       header.pres_terminate = true;
    }
 
    pvr_csb_pack (&ppp_state[1], TA_STATE_TERMINATE0, term0) {
-      term0.clip_right =
-         DIV_ROUND_UP(
-            width,
-            ROGUE_TA_STATE_TERMINATE0_CLIP_RIGHT_BLOCK_SIZE_IN_PIXELS) -
-         1;
-      term0.clip_bottom =
-         DIV_ROUND_UP(
-            height,
-            ROGUE_TA_STATE_TERMINATE0_CLIP_BOTTOM_BLOCK_SIZE_IN_PIXELS) -
-         1;
+      term0.clip_right = DIV_ROUND_UP(width, clip_block_size) - 1;
+      term0.clip_bottom = DIV_ROUND_UP(height, clip_block_size) - 1;
    }
 
    pvr_csb_pack (&ppp_state[2], TA_STATE_TERMINATE1, term1) {
