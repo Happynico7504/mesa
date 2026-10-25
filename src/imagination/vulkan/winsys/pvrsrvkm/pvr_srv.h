@@ -49,6 +49,8 @@
 #define PVR_SRV_TRANSFER_3D_HEAP_IDENT "TQ3DParameters"
 #define PVR_SRV_USCCODE_HEAP_IDENT "USC Code"
 #define PVR_SRV_VISIBILITY_TEST_HEAP_IDENT "Visibility Test"
+#define PVR_SRV_MMU_INIA_BRN_65273_HEAP_IDENT "MMU INIA BRN65273"
+#define PVR_SRV_MMU_INIB_BRN_65273_HEAP_IDENT "MMU INIB BRN65273"
 
 #define FWIF_PDS_HEAP_TOTAL_BYTES 4096
 #define FWIF_PDS_HEAP_VDM_SYNC_OFFSET_BYTES 0
@@ -88,6 +90,15 @@ struct pvr_srv_winsys {
    /* Optional heaps */
    bool rgn_hdr_heap_present;
    struct pvr_srv_winsys_heap rgn_hdr_heap;
+
+   /* BRN 65273: the firmware writes region headers to the start of these two
+    * heaps, which user space has to back with memory.
+    */
+   bool brn65273_heaps_present;
+   struct pvr_srv_winsys_heap mmu_inia_heap;
+   struct pvr_srv_winsys_heap mmu_inib_heap;
+   struct pvr_winsys_vma *mmu_inia_vma;
+   struct pvr_winsys_vma *mmu_inib_vma;
 
    /* vma's for carveout memory regions */
    struct pvr_winsys_vma *pds_vma;

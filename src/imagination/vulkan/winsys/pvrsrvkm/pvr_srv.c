@@ -137,7 +137,8 @@ static VkResult pvr_srv_heap_init(
    struct pvr_srv_winsys *srv_ws,
    struct pvr_srv_winsys_heap *srv_heap,
    uint32_t heap_idx,
-   const struct pvr_winsys_static_data_offsets *const static_data_offsets)
+   const struct pvr_winsys_static_data_offsets *const static_data_offsets,
+   uint64_t min_carveout_size)
 {
    pvr_dev_addr_t base_address;
    uint32_t log2_page_size;
@@ -155,6 +156,8 @@ static VkResult pvr_srv_heap_init(
                                      &log2_page_size);
    if (result != VK_SUCCESS)
       return result;
+
+   carveout_size = MAX2(carveout_size, min_carveout_size);
 
    result = pvr_winsys_heap_init(&srv_ws->base,
                                  base_address,
@@ -199,6 +202,125 @@ static bool pvr_srv_heap_finish(struct pvr_srv_winsys *srv_ws,
    return true;
 }
 
+/* Back the first page of a BRN 65273 heap with GPU-only memory, as the
+ * services user space driver does ("BRN65273_RgnHeader").
+ */
+static VkResult pvr_srv_brn65273_heap_map(struct pvr_srv_winsys *srv_ws,
+                                          struct pvr_srv_winsys_heap *srv_heap,
+                                          struct pvr_winsys_vma **const vma_out)
+{
+   struct pvr_winsys *ws = &srv_ws->base;
+   struct pvr_winsys_vma *vma;
+   struct pvr_winsys_bo *bo;
+   VkResult result;
+
+   result = ws->ops->buffer_create(ws,
+                                   ws->page_size,
+                                   ws->page_size,
+                                   PVR_WINSYS_BO_TYPE_GPU,
+                                   PVR_WINSYS_BO_FLAG_GPU_UNCACHED,
+                                   &bo);
+   if (result != VK_SUCCESS)
+      return result;
+
+   result = pvr_srv_heap_alloc_carveout(&srv_heap->base,
+                                        srv_heap->base.base_addr,
+                                        ws->page_size,
+                                        ws->page_size,
+                                        &vma);
+   if (result != VK_SUCCESS)
+      goto err_buffer_destroy;
+
+   result = ws->ops->vma_map(vma, bo, 0, ws->page_size, NULL);
+   if (result != VK_SUCCESS)
+      goto err_heap_free;
+
+   /* The mapping keeps the bo alive. */
+   ws->ops->buffer_destroy(bo);
+
+   *vma_out = vma;
+
+   return VK_SUCCESS;
+
+err_heap_free:
+   ws->ops->heap_free(vma);
+
+err_buffer_destroy:
+   ws->ops->buffer_destroy(bo);
+
+   return result;
+}
+
+static void pvr_srv_brn65273_heap_unmap(struct pvr_winsys_vma *vma)
+{
+   const struct pvr_winsys *const ws = vma->heap->ws;
+
+   ws->ops->vma_unmap(vma);
+   ws->ops->heap_free(vma);
+}
+
+static VkResult pvr_srv_brn65273_heaps_init(struct pvr_srv_winsys *srv_ws,
+                                            int inia_heap_idx,
+                                            int inib_heap_idx)
+{
+   const struct pvr_winsys_static_data_offsets no_static_data_offsets = { 0 };
+   VkResult result;
+
+   result = pvr_srv_heap_init(srv_ws,
+                              &srv_ws->mmu_inia_heap,
+                              inia_heap_idx,
+                              &no_static_data_offsets,
+                              PVR_SRV_CARVEOUT_SIZE_GRANULARITY);
+   if (result != VK_SUCCESS)
+      return result;
+
+   result = pvr_srv_heap_init(srv_ws,
+                              &srv_ws->mmu_inib_heap,
+                              inib_heap_idx,
+                              &no_static_data_offsets,
+                              PVR_SRV_CARVEOUT_SIZE_GRANULARITY);
+   if (result != VK_SUCCESS)
+      goto err_heap_finish_inia;
+
+   result = pvr_srv_brn65273_heap_map(srv_ws,
+                                      &srv_ws->mmu_inia_heap,
+                                      &srv_ws->mmu_inia_vma);
+   if (result != VK_SUCCESS)
+      goto err_heap_finish_inib;
+
+   result = pvr_srv_brn65273_heap_map(srv_ws,
+                                      &srv_ws->mmu_inib_heap,
+                                      &srv_ws->mmu_inib_vma);
+   if (result != VK_SUCCESS)
+      goto err_heap_unmap_inia;
+
+   return VK_SUCCESS;
+
+err_heap_unmap_inia:
+   pvr_srv_brn65273_heap_unmap(srv_ws->mmu_inia_vma);
+
+err_heap_finish_inib:
+   pvr_srv_heap_finish(srv_ws, &srv_ws->mmu_inib_heap);
+
+err_heap_finish_inia:
+   pvr_srv_heap_finish(srv_ws, &srv_ws->mmu_inia_heap);
+
+   return result;
+}
+
+static void pvr_srv_brn65273_heaps_finish(struct pvr_srv_winsys *srv_ws)
+{
+   pvr_srv_brn65273_heap_unmap(srv_ws->mmu_inib_vma);
+   pvr_srv_brn65273_heap_unmap(srv_ws->mmu_inia_vma);
+
+   if (!pvr_srv_heap_finish(srv_ws, &srv_ws->mmu_inib_heap) ||
+       !pvr_srv_heap_finish(srv_ws, &srv_ws->mmu_inia_heap)) {
+      vk_errorf(NULL,
+                VK_ERROR_UNKNOWN,
+                "BRN 65273 heap in use, can not deinit");
+   }
+}
+
 static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
 {
    const struct pvr_winsys_static_data_offsets
@@ -219,6 +341,8 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
    int vis_test_heap_idx = -1;
    int general_heap_idx = -1;
    int rgn_hdr_heap_idx = -1;
+   int mmu_inia_heap_idx = -1;
+   int mmu_inib_heap_idx = -1;
    int pds_heap_idx = -1;
    int usc_heap_idx = -1;
    uint32_t heap_count;
@@ -280,6 +404,14 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
       } else if (pvr_srv_heap_needs_init(vis_test_heap_idx, heap_name,
                                          PVR_SRV_VISIBILITY_TEST_HEAP_IDENT)) {
          vis_test_heap_idx = i;
+
+      } else if (pvr_srv_heap_needs_init(mmu_inia_heap_idx, heap_name,
+                                         PVR_SRV_MMU_INIA_BRN_65273_HEAP_IDENT)) {
+         mmu_inia_heap_idx = i;
+
+      } else if (pvr_srv_heap_needs_init(mmu_inib_heap_idx, heap_name,
+                                         PVR_SRV_MMU_INIB_BRN_65273_HEAP_IDENT)) {
+         mmu_inib_heap_idx = i;
       }
    }
 
@@ -296,35 +428,40 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
    result = pvr_srv_heap_init(srv_ws,
                               &srv_ws->general_heap,
                               general_heap_idx,
-                              &general_heap_static_data_offsets);
+                              &general_heap_static_data_offsets,
+                              0);
    if (result != VK_SUCCESS)
       goto err_pvr_srv_int_ctx_destroy;
 
    result = pvr_srv_heap_init(srv_ws,
                               &srv_ws->pds_heap,
                               pds_heap_idx,
-                              &pds_heap_static_data_offsets);
+                              &pds_heap_static_data_offsets,
+                              0);
    if (result != VK_SUCCESS)
       goto err_pvr_srv_heap_finish_general;
 
    result = pvr_srv_heap_init(srv_ws,
                               &srv_ws->transfer_3d_heap,
                               transfer_3d_heap_idx,
-                              &no_static_data_offsets);
+                              &no_static_data_offsets,
+                              0);
    if (result != VK_SUCCESS)
       goto err_pvr_srv_heap_finish_pds;
 
    result = pvr_srv_heap_init(srv_ws,
                               &srv_ws->usc_heap,
                               usc_heap_idx,
-                              &usc_heap_static_data_offsets);
+                              &usc_heap_static_data_offsets,
+                              0);
    if (result != VK_SUCCESS)
       goto err_pvr_srv_heap_finish_transfer_3d;
 
    result = pvr_srv_heap_init(srv_ws,
                               &srv_ws->vis_test_heap,
                               vis_test_heap_idx,
-                              &no_static_data_offsets);
+                              &no_static_data_offsets,
+                              0);
    if (result != VK_SUCCESS)
       goto err_pvr_srv_heap_finish_usc;
 
@@ -333,13 +470,24 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
       result = pvr_srv_heap_init(srv_ws,
                                  &srv_ws->rgn_hdr_heap,
                                  rgn_hdr_heap_idx,
-                                 &no_static_data_offsets);
+                                 &no_static_data_offsets,
+                              0);
       if (result != VK_SUCCESS)
          goto err_pvr_srv_heap_finish_vis_test;
 
       srv_ws->rgn_hdr_heap_present = true;
    } else {
       srv_ws->rgn_hdr_heap_present = false;
+   }
+
+   srv_ws->brn65273_heaps_present = mmu_inia_heap_idx != -1 &&
+                                    mmu_inib_heap_idx != -1;
+   if (srv_ws->brn65273_heaps_present) {
+      result = pvr_srv_brn65273_heaps_init(srv_ws,
+                                           mmu_inia_heap_idx,
+                                           mmu_inib_heap_idx);
+      if (result != VK_SUCCESS)
+         goto err_pvr_srv_heap_finish_rgn_hdr;
    }
 
    result =
@@ -352,7 +500,7 @@ static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)
                                                &srv_ws->pds_vma,
                                                &srv_ws->usc_vma);
    if (result != VK_SUCCESS)
-      goto err_pvr_srv_heap_finish_rgn_hdr;
+      goto err_pvr_srv_brn65273_heaps_finish;
 
    result = pvr_winsys_helper_fill_static_memory(&srv_ws->base,
                                                  srv_ws->general_vma,
@@ -367,6 +515,10 @@ err_pvr_srv_free_static_memory:
    pvr_winsys_helper_free_static_memory(srv_ws->general_vma,
                                         srv_ws->pds_vma,
                                         srv_ws->usc_vma);
+
+err_pvr_srv_brn65273_heaps_finish:
+   if (srv_ws->brn65273_heaps_present)
+      pvr_srv_brn65273_heaps_finish(srv_ws);
 
 err_pvr_srv_heap_finish_rgn_hdr:
    if (srv_ws->rgn_hdr_heap_present)
@@ -398,6 +550,9 @@ static void pvr_srv_memctx_finish(struct pvr_srv_winsys *srv_ws)
    pvr_winsys_helper_free_static_memory(srv_ws->general_vma,
                                         srv_ws->pds_vma,
                                         srv_ws->usc_vma);
+
+   if (srv_ws->brn65273_heaps_present)
+      pvr_srv_brn65273_heaps_finish(srv_ws);
 
    if (srv_ws->rgn_hdr_heap_present) {
       if (!pvr_srv_heap_finish(srv_ws, &srv_ws->rgn_hdr_heap)) {
