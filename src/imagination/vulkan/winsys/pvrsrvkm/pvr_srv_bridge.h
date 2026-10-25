@@ -28,6 +28,7 @@
 #include <stdint.h>
 
 #include "drm-uapi/drm.h"
+#include "pvr_srv_version.h"
 #include "pvr_srv.h"
 #include "pvr_types.h"
 #include "util/macros.h"
@@ -136,15 +137,6 @@
 #define RGX_BUILD_OPTIONS                       \
    (SUPPORT_RGX_SET_OFFSET | DEBUG_SET_OFFSET | \
     SUPPORT_BUFFER_SYNC_SET_OFFSET | OPTIONS_BIT31)
-
-#define PVR_SRV_VERSION_MAJ 1U
-#define PVR_SRV_VERSION_MIN 15U
-
-#define PVR_SRV_VERSION                                              \
-   (((uint32_t)((uint32_t)(PVR_SRV_VERSION_MAJ) & 0xFFFFU) << 16U) | \
-    (((PVR_SRV_VERSION_MIN) & 0xFFFFU) << 0U))
-
-#define PVR_SRV_VERSION_BUILD 6070602
 
 #if PVR_SRV_VERSION_MIN < 17U
 /* The 1.15 driver has no sync commands on the render node. Timelines are

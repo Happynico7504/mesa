@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "pvrsrvkm/pvr_srv_version.h"
 #include "util/macros.h"
 
 /** Indicates the number of RTDATAs per RTDATASET. */
@@ -35,7 +36,12 @@
 #define ROGUE_FWIF_NUM_RTDATA_FREELISTS 2U
 #define ROGUE_NUM_GEOM_CORES 1U
 
-#define ROGUE_NUM_GEOM_CORES_SIZE 2U
+#if PVR_SRV_VERSION_MIN < 17U
+/* 1.15 has no multicore geometry state. */
+#   define ROGUE_NUM_GEOM_CORES_SIZE 1U
+#else
+#   define ROGUE_NUM_GEOM_CORES_SIZE 2U
+#endif
 
 /**
  * Maximum number of UFOs in a CCB command.

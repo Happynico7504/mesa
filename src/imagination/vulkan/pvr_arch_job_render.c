@@ -126,7 +126,21 @@ void pvr_arch_rt_mtile_info_init(const struct pvr_device_info *dev_info,
 
    rogue_get_num_macrotiles_xy(dev_info, &info->mtiles_x, &info->mtiles_y);
 
-   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
+   if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format) &&
+       PVR_GET_FEATURE_VALUE(dev_info, simple_parameter_format_version, 0) ==
+          1) {
+      /* Version 1 has no 2x2 tile groups. Set up 16 macrotiles as below,
+       * without aligning them to a tile group.
+       */
+      info->mtile_x1 = DIV_ROUND_UP(info->num_tiles_x, 4);
+      info->mtile_y1 = DIV_ROUND_UP(info->num_tiles_y, 4);
+      info->mtile_x2 = 0;
+      info->mtile_y2 = 0;
+      info->mtile_x3 = 0;
+      info->mtile_y3 = 0;
+      info->x_tile_max = info->num_tiles_x - 1;
+      info->y_tile_max = info->num_tiles_y - 1;
+   } else if (PVR_HAS_FEATURE(dev_info, simple_internal_parameter_format)) {
       assert(PVR_GET_FEATURE_VALUE(dev_info,
                                    simple_parameter_format_version,
                                    0) == 2);
