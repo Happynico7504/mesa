@@ -469,6 +469,32 @@ struct rogue_fwif_cmd_abort {
  * Configuration registers which need to be loaded by the firmware before CDM
  * can be started.
  */
+#if PVR_SRV_VERSION_MIN < 17U
+/* The 1.15 firmware is built per core and leaves out the fields for features
+ * the core lacks, so this is the layout its compute handler reads.
+ */
+struct rogue_fwif_cdm_regs {
+   uint64_t tpu_border_colour_table;
+   uint64_t cdm_ctrl_stream_base;
+
+   /* Only used when BRN 49927 is present. */
+   uint32_t tpu;
+
+   uint32_t cdm_resume_pds1;
+   uint64_t cdm_context_state_base_addr;
+};
+
+struct rogue_fwif_cmd_compute {
+   alignas(8) struct rogue_fwif_cmd_common cmn;
+   alignas(8) struct rogue_fwif_cdm_regs regs;
+   alignas(8) uint32_t flags;
+   uint32_t padding;
+};
+
+static_assert(sizeof(struct rogue_fwif_cmd_compute) == 48U &&
+                 offsetof(struct rogue_fwif_cmd_compute, regs) == 8U,
+              "compute command must match the 1.15 firmware");
+#else
 struct rogue_fwif_cdm_regs {
    uint64_t tpu_border_colour_table;
 
@@ -523,6 +549,7 @@ struct rogue_fwif_cmd_compute {
    /* Only used when feature GPU_MULTICORE_SUPPORT present. */
    uint32_t execute_count;
 };
+#endif
 
 static_assert(
    offsetof(struct rogue_fwif_cmd_compute, cmn) == 0U,

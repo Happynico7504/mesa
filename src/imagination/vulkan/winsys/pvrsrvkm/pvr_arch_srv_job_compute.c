@@ -59,6 +59,13 @@ pvr_srv_compute_cmd_stream_load(struct rogue_fwif_cmd_compute *const cmd,
    regs->cdm_resume_pds1 = *stream_ptr;
    stream_ptr += pvr_cmd_length(CR_CDM_CONTEXT_PDS1);
 
+#if PVR_SRV_VERSION_MIN < 17U
+   /* The 1.15 compute command has no room for these. */
+   assert(!PVR_HAS_FEATURE(dev_info, compute_morton_capable));
+   assert(!PVR_HAS_FEATURE(dev_info, cluster_grouping));
+   assert(!PVR_HAS_FEATURE(dev_info, tpu_dm_global_registers));
+   assert(!PVR_HAS_FEATURE(dev_info, gpu_multicore_support));
+#else
    if (PVR_HAS_FEATURE(dev_info, compute_morton_capable)) {
       regs->cdm_item = *stream_ptr;
       stream_ptr += pvr_cmd_length(CR_CDM_ITEM);
@@ -78,6 +85,7 @@ pvr_srv_compute_cmd_stream_load(struct rogue_fwif_cmd_compute *const cmd,
       cmd->execute_count = *stream_ptr;
       stream_ptr++;
    }
+#endif
 
    assert((const uint8_t *)stream_ptr - stream <= stream_len);
    assert((const uint8_t *)stream_ptr - stream == main_stream_len);
